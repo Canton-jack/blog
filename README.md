@@ -46,7 +46,7 @@ koa-session结构
 我们从 koa-session 的初始化，来一步步看下它的执行流程：
 
 先看下 koa-sessin 的使用方法：
-
+```
 const session = require('koa-session');
 const Koa = require('koa');
 const app = new Koa();
@@ -66,6 +66,7 @@ app.use(ctx => {
 });
 
 app.listen(3000);
+```
 初始化
 初始化 koa-session 时，会要求传入一个app实例。
 
