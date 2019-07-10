@@ -31,16 +31,17 @@ koa-session：https://github.com/koajs/session
 
 koa-session结构
 来看 koa-session 的目录结构，非常简单；主要逻辑集中在 context.js 。
-
+```
 ├── index.js    // 入口
 ├── lib
 │   ├── context.js
 │   ├── session.js
 │   └── util.js
 └── package.json
+```
 先给出一个 koa-session 主要模块的脑图，可以先看个大概：
 
-
+![Image text](https://camo.githubusercontent.com/1f411a02fe9c8fbe1928d3f602c21288a93c6c7c/68747470733a2f2f757365722d676f6c642d63646e2e786974752e696f2f323031382f31322f31362f313637623761306364613735396536633f773d3138363926683d3139373526663d706e6726733d3932343637)
 
 屡一下流程
 我们从 koa-session 的初始化，来一步步看下它的执行流程：
@@ -73,7 +74,7 @@ app.listen(3000);
 实际上，正是在初始化的时候，往 app.context 上挂载了session对象，并且 session 对象是由 lib/context.js 实例化而来，所以我们使用的 ctx.session 就是 koa-session 自己构造的一个类。
 
 我们打开koa-session/index.js：
-
+```
 module.exports = function(opts, app) {
   opts = formatOpts(opts);  // 格式化配置项，设置一些默认值
   extendContext(app.context, opts); // 划重点，给 app.ctx 定义了 session对象
@@ -87,10 +88,11 @@ module.exports = function(opts, app) {
     }
   };
 };
+```
 通过内部的一次初始化，返回一个koa中间件函数。
 
 一步一步的来看，formatOpts 是用来做一些默认参数处理，extendContext 的主要任务是对 ctx 做一个拦截器，如下：
-
+```
 function extendContext(context, opts) {
   Object.defineProperties(context, {
     [CONTEXT_SESSION]: {
@@ -111,12 +113,13 @@ function extendContext(context, opts) {
     }
   });
 }
+```
 走到上面这段代码时，事实上就是给 app.context 下挂载了一个“私有”的 ContextSession 对象 ctx[CONTEXT_SESSION] ，有一些方法用来初始化它（如initFromExternal、initFromCookie）。然后又挂载了一个“公共”的 session 对象。
 
 为什么说到“私有”、“公共”呢，这里比较细节。用到了 Symbol 类型，使得外部不可访问到 ctx[CONTEXT_SESSION] 。只通过 ctx.session 对外暴露了 (get/set) 方法。
 
 再来看下 index.js 导出的中间件函数
-
+```
 return async function session(ctx, next) {
   const sess = ctx[CONTEXT_SESSION];
   if (sess.store) await sess.initFromExternal();
@@ -125,14 +128,17 @@ return async function session(ctx, next) {
     await sess.commit();
   }
 };
+```
 这里，将 ctx[CONTEXT_SESSION] 实例赋值给了 sess ，然后根据是否有 opts.store ，调用了 sess.initFromExternal ，字面意思是每次经过中间件，都会去调一个外部的东西来初始化 session ，我们后面会提到。
 
 接着看是执行了如下代码，也即执行我们的业务逻辑。
-
+```
 await next()
+```
 然后就是下面这个了，看样子应该是类似保存 session 的操作。
-
+```
 sess.commit();
+```
 经过上面的代码分析，我们看到了 koa-session 中间件的主流程以及保存操作。
 
 那么 session 在什么时候被创建呢？回到上面提到的拦截器 extendContext ，它会在接到http请求的时候，从 ContextSession类 实例化出 session 对象。
@@ -143,15 +149,16 @@ sess.commit();
 
 ContextSession类
 先看构造函数：
-
+```
 constructor(ctx, opts) {
   this.ctx = ctx;
   this.app = ctx.app;
   this.opts = Object.assign({}, opts);
   this.store = this.opts.ContextStore ? new this.opts.ContextStore(ctx) : this.opts.store;
 }
+```
 居然啥屁事都没干。往下看 get() 方法:
-
+```
 get() {
   const session = this.session;
   // already retrieved
@@ -164,6 +171,7 @@ get() {
   if (!this.store) this.initFromCookie();
   return this.session;
 }
+```
 噢，原来是一个单例模式（等到使用时候再生成对象，多次调用会直接使用第一次的对象）。
 
 这里有个判断，是否传入了 opts.store 参数，如果没有则是用 initFromCookie() 来生成 session 对象。
@@ -171,8 +179,9 @@ get() {
 那如果传了 opts.store 呢，又啥都不干吗，WTF？
 
 显然不是，还记得初始化里提到的那句 initFromExternal 函数调用么。
-
+```
 if (sess.store) await sess.initFromExternal();
+```
 所以，这里是根据是否有 opts.store ，来选择两种方式不同的生成 session 方式。
 
 问：store是什么呢？
@@ -182,7 +191,7 @@ if (sess.store) await sess.initFromExternal();
 问：什么外部存储，存哪里的？
 
 答：同学莫急，先往后看。
-
+```
 initFromCookie
 initFromCookie() {
   const ctx = this.ctx;
@@ -203,14 +212,12 @@ initFromCookie() {
 
   this.create(json);
 }
+```
 在这里，我们发现了一个很重要的信息，session 居然是加密后直接存在 cookie 中的。
 
 我们 console.log 一下 json 变量，来验证下：
-
-
-
-
-
+![Image text](https://camo.githubusercontent.com/4b970ffeae4c496af1a188beef5ca3e3a05d37a4/68747470733a2f2f757365722d676f6c642d63646e2e786974752e696f2f323031382f31322f31372f313637623937373736646130303836653f773d38383626683d333226663d706e6726733d3131373434)
+```
 initFromeExternal
 async initFromExternal() {
   const ctx = this.ctx;
@@ -240,17 +247,19 @@ async initFromExternal() {
   // create with original `externalKey`
   this.create(json, externalKey);
 }
+```
 可以看到 store.get() ，有一串信息是存在 store 中，可以 get 到的。
 
 而且也是在不断地要求调用 create() 。
 
 create
 create()到底做了什么呢？
-
+ ```
 create(val, externalKey) {
   if (this.store) this.externalKey = externalKey || this.opts.genid();
   this.session = new Session(this, val);
 }
+```
 它判断了 store ，如果有 store ，就会设置上 externalKey ，或者生成一个随机id。
 
 基本可以看出，是在 sotre 中存储一些信息，并且可以通过 externalKey 去用来获取。
@@ -263,7 +272,7 @@ create(val, externalKey) {
 
 Session类
 老规矩，先看构造函数：
-
+```
 constructor(sessionContext, obj) {
   this._sessCtx = sessionContext;
   this._ctx = sessionContext.ctx;
@@ -278,29 +287,32 @@ constructor(sessionContext, obj) {
     }
   }
 }
+```
 接收了 ContextSession 实例传来 sessionContext 和 obj ，其他没有做什么。
 
 Session 类仅仅是用于存储 session 的值，以及_maxAge，并且提供了toJSON方法用来获取过滤了_maxAge等字段的，session对象的值。
 
 session如何持久化保存
 看完以上代码，我们大致知道了 session 可以从外部或者 cookie 中取值，那它是如何保存的呢，我们回到 koa-session/index.js 中提到的 commit 方法，可以看到：
-
+```
 await next();
 
 if (opts.autoCommit) {
   await sess.commit();
 }
+```
 思路立马就清晰了，它是在中间件结束 next() 后，进行了一次 commit() 。
 
 commit()方法，可以在 lib/context.js 中找到：
-
+```
 async commit() {
   // ...省略n个判断，包括是否有变更，是否需要删除session等
 
   await this.save(changed);
 }
+```
 再来看save()方法：
-
+```
 async save(changed) {
   const opts = this.opts;
   const key = opts.key;
@@ -325,6 +337,7 @@ async save(changed) {
 
   this.ctx.cookies.set(key, json, opts);
 }
+```
 豁然开朗了，实际就是默认把数据 json ，塞进了 cookie ，即 cookie 来存储加密后的 session 信息。
 
 然后，如果设置了外部 store ，会调用 store.set() 去保存 session 。具体的保存逻辑，保存到哪里，由 store 对象自己决定！
